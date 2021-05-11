@@ -8,5 +8,5 @@ lightning_logs/
 
 output/
 
-data/cached*
+cached*
 data/crossNER
