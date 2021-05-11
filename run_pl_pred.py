@@ -10,7 +10,7 @@ import torch
 import torch.nn.functional as F
 import numpy as np
 
-from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score
+from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from lightning_base import add_generic_args, generic_train
@@ -162,7 +162,9 @@ def evaluate_few_shot(args, model):
             vit_labels = vit_labels.detach().cpu().numpy()
             for label in vit_labels:
                 preds_list[i].append(IO_label_map[label-1])
-
+    
+    report = classification_report(out_label_list, preds_list)
+    print(report)
     results = {
         "precision": precision_score(out_label_list, preds_list),
         "recall": recall_score(out_label_list, preds_list),

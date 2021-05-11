@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-export BERT_MODEL=bert-base-cased
+export BERT_MODEL=/home/whou/workspace/pretrained_models/bert-base-uncased
 export CHECKPOINT=$1
 export ALGO=$2
 
@@ -19,5 +19,7 @@ python3 run_pl_pred.py --data_dir ../data/ \
 --checkpoint $CHECKPOINT \
 --output_dir $OUTPUT_DIR \
 --algorithm $ALGO \
+--train_batch_size 8 \
+--eval_batch_size 2 \
 --tau 0.05 \
---gpus 1
+--gpus 1 > $OUTPUT_DIR/output_$ALGO.log 2>&1 &

@@ -5,3 +5,8 @@
 __pycache__/
 venv/
 lightning_logs/
+
+output/
+
+data/cached*
+data/crossNER
