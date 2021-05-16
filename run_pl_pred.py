@@ -91,7 +91,14 @@ def get_support_encodings_and_labels(model, support_loader):
         support_encodings.append(encodings[idx])
         support_labels.append(labels[idx])
     return torch.cat(support_encodings), torch.cat(support_labels)
-    
+
+def _get_proto(embedding, tag):
+    proto = []
+    assert tag.size(0) == embedding.size(0)
+    for label in range(torch.max(tag)+1):
+        proto.append(torch.mean(embedding[tag==label], 0))
+    proto = torch.stack(proto)
+    return proto, torch.range(0, torch.max(tag)).type_as(tag)
 
 def evaluate_few_shot(args, model):
     """
@@ -110,6 +117,8 @@ def evaluate_few_shot(args, model):
     support_loader = get_dataloader(model, target_labels, args.data_dir, args.sup_fname, args.eval_batch_size)
     test_loader = get_dataloader(model, target_labels, args.data_dir, args.test_fname, args.eval_batch_size)
     support_encodings, support_labels = get_support_encodings_and_labels(model, support_loader)
+    if args.algorithm == "Proto":
+        support_encodings, support_labels = _get_proto(support_encodings, support_labels)
 
     # merge B- and I- tags into I- tags
     support_IO_labels = []
@@ -300,7 +309,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--algorithm",
         default="NNShot",
-        choices=["NNShot", "StructShot"],
+        choices=["NNShot", "StructShot", "Proto"],
         help="Few-shot NER algorithm options",
     )
     parser.add_argument(
