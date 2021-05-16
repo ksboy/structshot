@@ -10,3 +10,4 @@ output/
 
 cached*
 data/crossNER
+data/FewFC-main
