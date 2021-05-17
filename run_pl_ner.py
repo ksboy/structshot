@@ -60,7 +60,8 @@ class NERTransformer(BaseTransformer):
     def prepare_data(self):
         "Called to initialize data. Use the call to construct features"
         args = self.hparams
-        for mode in ["train", "dev", "test"]:
+        mode_list = ["train", "dev", "test"] if args.do_predict else ["train", "dev"]
+        for mode in mode_list:
             cached_features_file = self._feature_file(mode)
             if os.path.exists(cached_features_file) and not args.overwrite_cache:
                 logger.info("Loading features from cached file %s", cached_features_file)

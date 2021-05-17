@@ -23,8 +23,6 @@ logger = logging.getLogger(__name__)
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-ner_task = EE()
-
 def get_dataloader(model, target_labels, data_dir, data_fname, batch_size):
     """
     Get dataloader for support or test set
@@ -319,12 +317,16 @@ if __name__ == "__main__":
         help="StructShot parameter to re-normalizes the transition probabilities",
     )
     args = parser.parse_args()
+    print(args)
+    if args.task_type=='EE':
+        ner_task = EE() 
+    elif  args.task_type=='NER':
+        ner_task = NER() 
+
     model = NERTransformer(args)
     trainer = generic_train(model, args)
-    # model = model.load_from_checkpoint(args.checkpoint)
-
-    # for key in torch.load(os.path.join(args.checkpoint, "pytorch_model.bin")).keys():
-    #     print(key)
-    # model = model.load_state_dict(torch.load(os.path.join(args.checkpoint, "pytorch_model.bin")))
-    model.model = model.model.from_pretrained(args.checkpoint)
+    # from .ckpt
+    model = model.load_from_checkpoint(args.checkpoint)
+    # from .bin
+    # model.model = model.model.from_pretrained(args.checkpoint)
     evaluate_few_shot(args, model)
