@@ -325,8 +325,8 @@ if __name__ == "__main__":
 
     model = NERTransformer(args)
     trainer = generic_train(model, args)
-    # from .ckpt
-    model = model.load_from_checkpoint(args.checkpoint)
+    # # from .ckpt
+    # model = model.load_from_checkpoint(args.checkpoint)
     # from .bin
-    # model.model = model.model.from_pretrained(args.checkpoint)
+    model.model = model.model.from_pretrained(args.checkpoint)
     evaluate_few_shot(args, model)
