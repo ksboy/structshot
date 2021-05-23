@@ -15,7 +15,7 @@ from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from lightning_base import add_generic_args, generic_train
 from run_pl_ner import NERTransformer
-from tasks import NER, EE
+from tasks_entity import NER, EE
 
 from viterbi import ViterbiDecoder
 
@@ -58,21 +58,27 @@ def get_dataloader(model, target_labels, data_dir, data_fname, batch_size):
     )
 
 
-def get_token_encodings_and_labels(model, batch):
+def get_entity_encodings_and_labels(model, batch):
     """
     Get token encoding using pretrained BERT-NER model as well as groundtruth label
     """
     batch = tuple(t.to(device) for t in batch)
-    label_batch = batch[3]
+    label_batch = batch[4] # batch_size
     with torch.no_grad():
         inputs = {"input_ids": batch[0], "attention_mask": batch[1], "output_hidden_states": True}
         if model.config.model_type != "distilbert":
             inputs["token_type_ids"] = (
-                batch[2] if model.config.model_type in ["bert", "xlnet"] else None
+                torch.zeros_like(batch[2]) if model.config.model_type in ["bert", "xlnet"] else None
             )  # XLM and RoBERTa don"t use token_type_ids
         outputs = model(**inputs)
         hidden_states = outputs[1][-1]  # last layer representations
-    return hidden_states, label_batch
+        token_type_ids = batch[2]
+        batch_size, seq_length = token_type_ids.shape
+        
+        mask = token_type_ids.unsqueeze(-1).expand_as(hidden_states).bool()
+        entity_embedding = torch.sum(hidden_states * mask, dim=1) / (torch.sum(mask, dim=1)+ 1e-8) # batch_size, hidden_size
+
+    return entity_embedding, label_batch
 
 
 def get_support_encodings_and_labels(model, support_loader):
@@ -81,7 +87,7 @@ def get_support_encodings_and_labels(model, support_loader):
     """
     support_encodings, support_labels = [], []
     for batch in tqdm(support_loader, desc="Support data representations"):
-        encodings, labels = get_token_encodings_and_labels(model, batch)
+        encodings, labels = get_entity_encodings_and_labels(model, batch)
         encodings = encodings.view(-1, encodings.shape[-1])
         labels = labels.flatten()
         # filter out PAD tokens
@@ -131,7 +137,7 @@ def evaluate_few_shot(args, model):
     emissions = None
     out_label_ids = None
     for batch in tqdm(test_loader, desc="Test data representations"):
-        encodings, labels = get_token_encodings_and_labels(model, batch)
+        encodings, labels = get_entity_encodings_and_labels(model, batch)
         nn_preds, nn_emissions = nn_decode(encodings, support_encodings, support_IO_labels)
         if preds is None:
             preds = nn_preds.detach().cpu().numpy()

@@ -44,6 +44,8 @@ class InputExample:
     guid: str
     words: List[str]
     labels: Optional[List[str]]
+    label: Optional[str]
+    token_type_ids: Optional[List[int]]
 
 
 @dataclass
@@ -57,6 +59,7 @@ class InputFeatures:
     attention_mask: List[int]
     token_type_ids: Optional[List[int]] = None
     label_ids: Optional[List[int]] = None
+    label_id: Optional[int] = None
 
 
 class Split(Enum):
@@ -65,7 +68,7 @@ class Split(Enum):
     test = "test"
 
 
-class TokenClassificationTask:
+class EntityClassificationTask:
     def read_examples_from_file(self, data_dir, mode: Union[Split, str]) -> List[InputExample]:
         raise NotImplementedError
 
@@ -88,6 +91,7 @@ class TokenClassificationTask:
         pad_token_segment_id=0,
         pad_token_label_id=-100,
         sequence_a_segment_id=0,
+        entity_token_segment_id = 1,
         mask_padding_with_zero=True,
     ) -> List[InputFeatures]:
         """Loads a data file into a list of `InputFeatures`
@@ -106,13 +110,15 @@ class TokenClassificationTask:
                 logger.info("Writing example %d of %d", ex_index, len(examples))
 
             tokens = []
+            token_type_ids = []
             label_ids = []
-            for word, label in zip(example.words, example.labels):
+            for word, segment_id, label in zip(example.words, example.token_type_ids, example.labels):
                 word_tokens = tokenizer.tokenize(word)
 
                 # bert-base-multilingual-cased sometimes output "nothing ([]) when calling tokenize with just a space.
                 if len(word_tokens) > 0:
                     tokens.extend(word_tokens)
+                    token_type_ids.extend([sequence_a_segment_id if not segment_id else entity_token_segment_id]+ [sequence_a_segment_id] * (len(word_tokens) - 1))
                     # Use the real label id for the first token of the word, and padding ids for the remaining tokens
                     label_ids.extend([label_map[label]] + [pad_token_label_id] * (len(word_tokens) - 1))
 
@@ -121,6 +127,7 @@ class TokenClassificationTask:
             if len(tokens) > max_seq_length - special_tokens_count:
                 tokens = tokens[: (max_seq_length - special_tokens_count)]
                 label_ids = label_ids[: (max_seq_length - special_tokens_count)]
+                token_type_ids = token_type_ids[: (max_seq_length - special_tokens_count)]
 
             # The convention in BERT is:
             # (a) For sequence pairs:
@@ -142,11 +149,12 @@ class TokenClassificationTask:
             # the entire model is fine-tuned.
             tokens += [sep_token]
             label_ids += [pad_token_label_id]
+            token_type_ids += [sequence_a_segment_id]
             if sep_token_extra:
                 # roberta uses an extra separator b/w pairs of sentences
                 tokens += [sep_token]
                 label_ids += [pad_token_label_id]
-            token_type_ids = [sequence_a_segment_id] * len(tokens)
+                token_type_ids += [sequence_a_segment_id]
 
             if cls_token_at_end:
                 tokens += [cls_token]
@@ -195,7 +203,7 @@ class TokenClassificationTask:
 
             features.append(
                 InputFeatures(
-                    input_ids=input_ids, attention_mask=input_mask, token_type_ids=token_type_ids, label_ids=label_ids
+                    input_ids=input_ids, attention_mask=input_mask, token_type_ids=token_type_ids, label_ids=label_ids, label_id=label_map[example.label]
                 )
             )
         return features
@@ -206,7 +214,7 @@ if is_torch_available():
     from torch import nn
     from torch.utils.data.dataset import Dataset
 
-    class TokenClassificationDataset(Dataset):
+    class EntityClassificationDataset(Dataset):
         """
         This will be superseded by a framework-agnostic approach
         soon.
@@ -219,7 +227,7 @@ if is_torch_available():
 
         def __init__(
             self,
-            token_classification_task: TokenClassificationTask,
+            token_classification_task: EntityClassificationTask,
             data_dir: str,
             tokenizer: PreTrainedTokenizer,
             labels: List[str],
@@ -276,7 +284,7 @@ if is_torch_available():
 if is_tf_available():
     import tensorflow as tf
 
-    class TFTokenClassificationDataset:
+    class TFEntityClassificationDataset:
         """
         This will be superseded by a framework-agnostic approach
         soon.
@@ -289,7 +297,7 @@ if is_tf_available():
 
         def __init__(
             self,
-            token_classification_task: TokenClassificationTask,
+            token_classification_task: EntityClassificationTask,
             data_dir: str,
             tokenizer: PreTrainedTokenizer,
             labels: List[str],
