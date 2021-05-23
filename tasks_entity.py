@@ -42,7 +42,7 @@ class NER(EntityClassificationTask):
                         words = []
                         labels_i, labels_c = [], []
                 else:
-                    splits = line.split()
+                    splits = line.strip('\n').split('\t')
                     # if len(splits)!=4:
                     #     print(line)
                     # assert len(splits)==4
@@ -108,41 +108,6 @@ def remove_duplication(alist):
     return res
 
 class EE(NER):
-    ## ccks格式
-    def role_process_bio_ccks(self, input_file, add_event_type_to_role=False, is_predict=False):
-        rows = open(input_file, encoding='utf-8').read().splitlines()
-        results = []
-        for row in rows:
-            if len(row)==1: print(row)
-            row = json.loads(row)
-            labels = ['O']*len(row["content"])
-            if is_predict: 
-                results.append({"id":row["id"], "words":list(row["content"]), "labels":labels})
-                continue
-            for event in row["events"]:
-                event_type = event["type"]
-                for arg in event["mentions"]:
-                    role = arg['role']
-                    if role=="trigger": continue
-                    if add_event_type_to_role: role = event_type + '-' + role
-                    argument_start_index, argument_end_index = arg["span"]
-                    labels[argument_start_index]= "B-{}".format(role)
-                    for i in range(argument_start_index+1, argument_end_index):
-                        labels[i]= "I-{}".format(role)
-                    # if arg['alias']!=[]: print(arg['alias'])
-            results.append({"guid":row["id"], "words":list(row["content"]), "labels":labels})
-        # write_file(results,output_file)
-        return results
-
-    def read_examples_from_file(self, data_dir, mode: Union[Split, str],  task="role", dataset="ccks") -> List[InputExample]:
-        file_path = os.path.join(data_dir, "{}.json".format(mode))
-        if dataset=="ccks":
-            if task=='trigger': items = self.trigger_process_bio_ccks(file_path)
-            elif task=='role': items = self.role_process_bio_ccks(file_path, add_event_type_to_role=True)
-        elif dataset=="lic":
-            if task=='trigger': items = self.trigger_process_bio_lic(file_path)
-            elif task=='role': items = self.role_process_bio_lic(file_path, add_event_type_to_role=True)
-        return [InputExample(**item) for item in items]
 
     def get_labels(self, path: str, task='role', mode="ner", target_event_type='', add_event_type_to_role=True) -> List[str]:
         if not path:
