@@ -73,8 +73,35 @@ def remove_duplication(alist):
     return res
 
 class EE(TokenClassificationTask):
-    def __init__(self):
-        pass
+    def __init__(self, task='role', dataset='ccks'):
+        self.task = task
+        self.dataset = dataset
+    
+    ## ccks格式
+    def trigger_process_bio_ccks(self, input_file, is_predict=False):
+        rows = open(input_file, encoding='utf-8').read().splitlines()
+        results = []
+        for row in rows:
+            if len(row)==1: print(row)
+            row = json.loads(row)
+            labels = ['O']*len(row["content"])
+            if is_predict: 
+                results.append({"id":row["id"], "words":list(row["content"]), "labels":labels})
+                continue
+            for event in row["events"]:
+                event_type = event["type"]
+                for mention in event["mentions"]:
+                    if mention["role"]=="trigger":
+                        trigger = mention["word"]
+                        trigger_start_index, trigger_end_index = mention["span"]
+                        labels[trigger_start_index]= "B-{}".format(event_type)
+                        for i in range(trigger_start_index+1, trigger_end_index):
+                            labels[i]= "I-{}".format(event_type)
+                            # labels[i]= "I-{}".format("触发词")
+                        break
+            results.append({"guid":row["id"], "words":list(row["content"]), "labels":labels})
+        # write_file(results,output_file)
+        return results
 
     ## ccks格式
     def role_process_bio_ccks(self, input_file, add_event_type_to_role=False, is_predict=False):
@@ -102,7 +129,9 @@ class EE(TokenClassificationTask):
         # write_file(results,output_file)
         return results
 
-    def read_examples_from_file(self, data_dir, mode: Union[Split, str],  task="role", dataset="ccks") -> List[InputExample]:
+    def read_examples_from_file(self, data_dir, mode: Union[Split, str]) -> List[InputExample]:
+        task = self.task
+        dataset = self.dataset
         file_path = os.path.join(data_dir, "{}.json".format(mode))
         if dataset=="ccks":
             if task=='trigger': items = self.trigger_process_bio_ccks(file_path)
@@ -126,6 +155,7 @@ class EE(TokenClassificationTask):
                 logger.warning("Maximum sequence length exceeded: No prediction for '%s'.", line.split()[0])
 
     def get_labels(self, path: str, task='role', mode="ner", target_event_type='', add_event_type_to_role=True) -> List[str]:
+        task = self.task
         if not path:
             if mode=='ner':
                 return ["O", "B-ENTITY", "I-ENTITY"]

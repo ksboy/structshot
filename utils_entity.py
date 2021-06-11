@@ -103,6 +103,7 @@ class EntityClassificationTask:
         # TODO clean up all this to leverage built-in features of tokenizers
 
         label_map = {label: i for i, label in enumerate(label_list)}
+        label_map['O']= pad_token_label_id
 
         features = []
         for (ex_index, example) in enumerate(examples):
@@ -125,6 +126,7 @@ class EntityClassificationTask:
                 if len(word_tokens) < 1:
                     # print(word,"<1") # 基本都是空格
                     tokens.extend(["[unused1]"])
+                    token_type_ids.extend([segment_id])
                     label_ids.extend([label_map[label]])
 
             # Account for [CLS] and [SEP] with "- 2" and with "- 3" for RoBERTa.
@@ -194,6 +196,7 @@ class EntityClassificationTask:
             assert len(token_type_ids) == max_seq_length
             assert len(label_ids) == max_seq_length
 
+            label_id = label_map[example.label]
             if ex_index < 5:
                 logger.info("*** Example ***")
                 logger.info("guid: %s", example.guid)
@@ -202,13 +205,14 @@ class EntityClassificationTask:
                 logger.info("input_mask: %s", " ".join([str(x) for x in input_mask]))
                 logger.info("token_type_ids: %s", " ".join([str(x) for x in token_type_ids]))
                 logger.info("label_ids: %s", " ".join([str(x) for x in label_ids]))
+                logger.info("label_id: %s", label_id)
 
             if "token_type_ids" not in tokenizer.model_input_names:
                 token_type_ids = None
 
             features.append(
                 InputFeatures(
-                    input_ids=input_ids, attention_mask=input_mask, token_type_ids=token_type_ids, label_ids=label_ids, label_id=label_map[example.label]
+                    input_ids=input_ids, attention_mask=input_mask, token_type_ids=token_type_ids, label_ids=label_ids, label_id=label_id
                 )
             )
         return features

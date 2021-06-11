@@ -13,7 +13,7 @@ from torch.utils.data import DataLoader, TensorDataset
 
 from lightning_base import BaseTransformer, add_generic_args, generic_train
 from utils_ner import TokenClassificationTask
-
+from tasks_ner import NER, EE
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +28,22 @@ class NERTransformer(BaseTransformer):
     def __init__(self, hparams):
         if type(hparams) == dict:
             hparams = Namespace(**hparams)
-        module = import_module("tasks")
-        try:
-            token_classification_task_clazz = getattr(module, hparams.task_type)
-            self.token_classification_task: TokenClassificationTask = token_classification_task_clazz()
-        except AttributeError:
-            raise ValueError(
-                f"Task {hparams.task_type} needs to be defined as a TokenClassificationTask subclass in {module}. "
-                f"Available tasks classes are: {TokenClassificationTask.__subclasses__()}"
-            )
+        module = import_module("tasks_ner")
+        # try:
+        #     token_classification_task_clazz = getattr(module, hparams.task_type)
+        #     self.token_classification_task: TokenClassificationTask = token_classification_task_clazz()
+        # except AttributeError:
+        #     raise ValueError(
+        #         f"Task {hparams.task_type} needs to be defined as a TokenClassificationTask subclass in {module}. "
+        #         f"Available tasks classes are: {TokenClassificationTask.__subclasses__()}"
+        #     )
+        if hparams.task_type=="NER":
+            self.token_classification_task = NER()
+        elif hparams.task_type=="EE":
+            self.token_classification_task = EE(task=hparams.sub_task)
+
         self.labels = self.token_classification_task.get_labels(hparams.labels)
+        print(self.labels)
         self.pad_token_label_id = CrossEntropyLoss().ignore_index
         super().__init__(hparams, len(self.labels), self.mode)
 

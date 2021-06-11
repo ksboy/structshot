@@ -9,5 +9,3 @@ lightning_logs/
 output/
 
 cached*
-data/crossNER
-data/FewFC-main

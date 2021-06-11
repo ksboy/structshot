@@ -24,7 +24,7 @@ class NER(EntityClassificationTask):
             for line in f:
                 if line.startswith("-DOCSTART-") or line == "" or line == "\n":
                     if words:
-                        if mode!='train':
+                        if False:
                             token_type_ids = [0] * len(words)
                             examples.append(InputExample(guid="{}-{}".format(mode, guid_index), words=words, token_type_ids=token_type_ids, labels = labels_c, label = label))
                         else:
@@ -37,7 +37,7 @@ class NER(EntityClassificationTask):
                                     token_type_ids[i] = 1
                                     _labels_c[i] = labels_c[i]
                                     assert label == labels_c[i]
-                                examples.append(InputExample(guid="{}-{}".format(mode, guid_index), words=words, token_type_ids=token_type_ids, labels=labels_c, label = label))
+                                examples.append(InputExample(guid="{}-{}".format(mode, guid_index), words=words, token_type_ids=token_type_ids, labels=_labels_c, label = label))
                         guid_index += 1
                         words = []
                         labels_i, labels_c = [], []
@@ -49,8 +49,11 @@ class NER(EntityClassificationTask):
                     words.append(splits[0])
                     if len(splits) > 1:
                         label = splits[-1].replace("\n", "")
-                        if len(label)==1:
+                        if label=='O':
                             labels_i.append("O")
+                            labels_c.append("O")
+                        elif len(label)==1:
+                            labels_i.append(label)
                             labels_c.append("O")
                         else:
                             labels_i.append(label.split("-", 1)[0])
@@ -61,7 +64,7 @@ class NER(EntityClassificationTask):
                         labels_c.append("O")
 
             if words:
-                if mode!='train':
+                if False:
                     token_type_ids = [0] * len(words)
                     examples.append(InputExample(guid="{}-{}".format(mode, guid_index), words=words, token_type_ids=token_type_ids, labels = labels_c, label = label))
                 else:
@@ -108,8 +111,12 @@ def remove_duplication(alist):
     return res
 
 class EE(NER):
-
-    def get_labels(self, path: str, task='role', mode="ner", target_event_type='', add_event_type_to_role=True) -> List[str]:
+    def __init__(self, task='role', dataset='ccks'):
+        self.task = task
+        self.dataset = dataset
+        
+    def get_labels(self, path: str, task='role', mode="classification", target_event_type='', add_event_type_to_role=True) -> List[str]:
+        task = self.task
         if not path:
             if mode=='ner':
                 return ["O", "B-ENTITY", "I-ENTITY"]

@@ -11,6 +11,12 @@ import torch.nn.functional as F
 import numpy as np
 
 from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report
+import sys,os
+sys.path.append('/hy-nas/workspace/code_repo/ner')
+from metrics import f1_score_identification, precision_score_identification, recall_score_identification, \
+    accuracy_score_entity_classification, accuracy_score_token_classification, \
+    f1_score_token_classification, precision_score_token_classification, recall_score_token_classification 
+
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from lightning_base import add_generic_args, generic_train
@@ -105,8 +111,7 @@ def evaluate_few_shot(args, model):
     For simplicity and better performance, we will use IO encodings rather than BIO.
     """
     model.to(device)
-
-    target_labels = ner_task.get_labels(args.target_labels)
+    target_labels = ner_task.get_labels(args.target_labels, args.sub_task)
     target_IO_labels = [label for label in target_labels if not label.startswith("B-")] 
     label_map = {i: label for i, label in enumerate(target_labels)}
     IO_label_map = {i: label for i, label in enumerate(target_IO_labels)}
@@ -132,7 +137,10 @@ def evaluate_few_shot(args, model):
     out_label_ids = None
     for batch in tqdm(test_loader, desc="Test data representations"):
         encodings, labels = get_token_encodings_and_labels(model, batch)
-        nn_preds, nn_emissions = nn_decode(encodings, support_encodings, support_IO_labels)
+        if args.use_bi:
+            nn_preds, nn_emissions = knn_decode(encodings, support_encodings, support_IO_labels) 
+        else:
+            nn_preds, nn_emissions = knn_decode(encodings, support_encodings, support_labels) 
         if preds is None:
             preds = nn_preds.detach().cpu().numpy()
             emissions = nn_emissions.detach().cpu().numpy()
@@ -151,7 +159,10 @@ def evaluate_few_shot(args, model):
             if out_label_ids[i, j] != model.pad_token_label_id:
                 out_label_list[i].append(label_map[out_label_ids[i][j]])
                 emissions_list[i].append(emissions[i][j])
-                preds_list[i].append(IO_label_map[preds[i][j]])
+                if args.use_bi:
+                    preds_list[i].append(IO_label_map[preds[i][j]])
+                else:
+                    preds_list[i].append(label_map[preds[i][j]])
 
     if args.algorithm == "StructShot":
         abstract_transitions = get_abstract_transitions(args.data_dir, args.train_fname)
@@ -176,6 +187,14 @@ def evaluate_few_shot(args, model):
         "precision": precision_score(out_label_list, preds_list),
         "recall": recall_score(out_label_list, preds_list),
         "f1": f1_score(out_label_list, preds_list),
+        "precision_i": precision_score_identification(out_label_list, preds_list),
+        "recall_i": recall_score_identification(out_label_list, preds_list),
+        "f1_i": f1_score_identification(out_label_list, preds_list),
+        "precision_c": precision_score_token_classification(out_label_list, preds_list),
+        "recall_c": recall_score_token_classification(out_label_list, preds_list),
+        "f1_c": f1_score_token_classification(out_label_list, preds_list),
+        "accuracy_token_c": accuracy_score_token_classification(out_label_list, preds_list),
+        "accuracy_entity_c": accuracy_score_entity_classification(out_label_list, preds_list)
     }
     print(results)
 
@@ -217,6 +236,32 @@ def get_nn_emissions(scores, tags):
         emissions[:, t] = torch.max(masked, dim=1)[0]
     return emissions
 
+def knn_decode(reps, support_reps, support_tags):
+    """
+    NNShot: neariest neighbor decoder for few-shot NER
+    """
+    batch_size, sent_len, ndim = reps.shape
+    scores = _euclidean_metric(reps.view(-1, ndim), support_reps, True)
+    # tags = support_tags[torch.argmax(scores, 1)]
+    emissions = get_knn_emissions(scores, support_tags)
+    tags = torch.argmax(emissions, 1)
+    return tags.view(batch_size, sent_len), emissions.view(batch_size, sent_len, -1)
+
+def get_knn_emissions(scores, tags):
+    """
+    Obtain emission scores from NNShot
+    """
+    n, m = scores.shape
+    n_tags = torch.max(tags) + 1
+    emissions = -100000. * torch.ones(n, n_tags).to(scores.device)
+    # scores = - scores
+    for t in range(n_tags):
+        mask = (tags == t).float().view(1, -1)
+        masked = scores * mask
+        masked = torch.where(masked < 0, masked, torch.tensor(-100000.).to(scores.device))
+        k = min(args.k, int(torch.sum(mask).tolist()))
+        emissions[:, t] = torch.mean(torch.topk(masked, k, dim=1)[0], dim=1)
+    return emissions
 
 def _euclidean_metric(a, b, normalize=False):
     if normalize:
@@ -316,10 +361,28 @@ if __name__ == "__main__":
         type=float,
         help="StructShot parameter to re-normalizes the transition probabilities",
     )
+    parser.add_argument(
+        "--sub_task",
+        default="role",
+        type=str,
+        help="sub task: trigger or role",
+    )
+    parser.add_argument(
+        "--use_bi",
+        default=True,
+        type=bool,
+        help="use bio or bi",
+    )
+    parser.add_argument(
+        "--k",
+        default=100,
+        type=int,
+        help="the k of knn",
+    )
     args = parser.parse_args()
     print(args)
     if args.task_type=='EE':
-        ner_task = EE() 
+        ner_task = EE(task=args.sub_task) 
     elif  args.task_type=='NER':
         ner_task = NER() 
 

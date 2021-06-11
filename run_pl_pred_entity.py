@@ -4,17 +4,23 @@ This script works on top of a pretrained BERT-NER model represented by a PyTorch
 
 import argparse
 import logging
-import os
+import os, sys
 import torch
 
 import torch.nn.functional as F
 import numpy as np
 
-from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report
+# from seqeval.metrics import accuracy_score, f1_score, precision_score, recall_score, classification_report
+# sys.path.append('/hy-nas/workspace/code_repo/ner')
+# from metrics import f1_score_identification, precision_score_identification, recall_score_identification, \
+#     accuracy_score_entity_classification, accuracy_score_token_classification, \
+#     f1_score_token_classification, precision_score_token_classification, recall_score_token_classification 
+from sklearn.metrics import accuracy_score
+
 from torch.utils.data import DataLoader, TensorDataset
 from tqdm import tqdm
 from lightning_base import add_generic_args, generic_train
-from run_pl_ner import NERTransformer
+from run_pl_entity import NERTransformer
 from tasks_entity import NER, EE
 
 from viterbi import ViterbiDecoder
@@ -29,6 +35,7 @@ def get_dataloader(model, target_labels, data_dir, data_fname, batch_size):
     This method largely overlaps with run_pl_ner.py
     """
     examples = ner_task.read_examples_from_file(data_dir, data_fname)
+    print(examples[:5])
     features = ner_task.convert_examples_to_features(
         examples,
         target_labels,
@@ -53,8 +60,9 @@ def get_dataloader(model, target_labels, data_dir, data_fname, batch_size):
         all_token_type_ids = torch.tensor([0 for f in features], dtype=torch.long)
         # HACK(we will not use this anymore soon)
     all_label_ids = torch.tensor([f.label_ids for f in features], dtype=torch.long)
+    all_label_id = torch.tensor([f.label_id for f in features], dtype=torch.long)
     return DataLoader(
-        TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_label_ids), batch_size=batch_size
+        TensorDataset(all_input_ids, all_attention_mask, all_token_type_ids, all_label_ids, all_label_id), batch_size=batch_size
     )
 
 
@@ -111,12 +119,13 @@ def evaluate_few_shot(args, model):
     For simplicity and better performance, we will use IO encodings rather than BIO.
     """
     model.to(device)
-
-    target_labels = ner_task.get_labels(args.target_labels)
+    target_labels = ner_task.get_labels(args.target_labels, args.sub_task)
+    print(target_labels)
     target_IO_labels = [label for label in target_labels if not label.startswith("B-")] 
     label_map = {i: label for i, label in enumerate(target_labels)}
-    IO_label_map = {i: label for i, label in enumerate(target_IO_labels)}
-    reversed_IO_map = {label: i for i, label in enumerate(target_IO_labels)}
+    label_map[model.pad_token_label_id] = 'O'
+    # IO_label_map = {i: label for i, label in enumerate(target_IO_labels)}
+    # reversed_IO_map = {label: i for i, label in enumerate(target_IO_labels)}
 
     support_loader = get_dataloader(model, target_labels, args.data_dir, args.sup_fname, args.eval_batch_size)
     test_loader = get_dataloader(model, target_labels, args.data_dir, args.test_fname, args.eval_batch_size)
@@ -124,21 +133,21 @@ def evaluate_few_shot(args, model):
     if args.algorithm == "Proto":
         support_encodings, support_labels = _get_proto(support_encodings, support_labels)
 
-    # merge B- and I- tags into I- tags
-    support_IO_labels = []
-    for label in support_labels.detach().cpu().numpy():
-        label_str = label_map[label]
-        if label_str.startswith("B-"):
-            label_str = "I-" + label_str[2:]
-        support_IO_labels.append(reversed_IO_map[label_str])
-    support_IO_labels = torch.tensor(support_IO_labels).to(support_labels.device)
+    # # merge B- and I- tags into I- tags
+    # support_IO_labels = []
+    # for label in support_labels.detach().cpu().numpy():
+    #     label_str = label_map[label]
+    #     if label_str.startswith("B-"):
+    #         label_str = "I-" + label_str[2:]
+    #     support_IO_labels.append(reversed_IO_map[label_str])
+    # support_IO_labels = torch.tensor(support_IO_labels).to(support_labels.device)
     
     preds = None
     emissions = None
     out_label_ids = None
     for batch in tqdm(test_loader, desc="Test data representations"):
         encodings, labels = get_entity_encodings_and_labels(model, batch)
-        nn_preds, nn_emissions = nn_decode(encodings, support_encodings, support_IO_labels)
+        nn_preds, nn_emissions = nn_decode(encodings, support_encodings, support_labels)
         if preds is None:
             preds = nn_preds.detach().cpu().numpy()
             emissions = nn_emissions.detach().cpu().numpy()
@@ -148,65 +157,67 @@ def evaluate_few_shot(args, model):
             emissions = np.append(emissions, nn_emissions.detach().cpu().numpy(), axis=0)
             out_label_ids = np.append(out_label_ids, labels.detach().cpu().numpy(), axis=0)
 
-    out_label_list = [[] for _ in range(out_label_ids.shape[0])]
-    emissions_list = [[] for _ in range(out_label_ids.shape[0])]
-    preds_list = [[] for _ in range(out_label_ids.shape[0])]
+    out_label_list = []
+    emissions_list = []
+    preds_list = []
 
     for i in range(out_label_ids.shape[0]):
-        for j in range(out_label_ids.shape[1]):
-            if out_label_ids[i, j] != model.pad_token_label_id:
-                out_label_list[i].append(label_map[out_label_ids[i][j]])
-                emissions_list[i].append(emissions[i][j])
-                preds_list[i].append(IO_label_map[preds[i][j]])
+        out_label_list.append(label_map[out_label_ids[i]])
+        emissions_list.append(emissions[i])
+        preds_list.append(label_map[preds[i]])
 
-    if args.algorithm == "StructShot":
-        abstract_transitions = get_abstract_transitions(args.data_dir, args.train_fname)
-        viterbi_decoder = ViterbiDecoder(len(target_IO_labels)+1, abstract_transitions, args.tau)
-        preds_list = [[] for _ in range(out_label_ids.shape[0])]
-        for i in range(out_label_ids.shape[0]):
-            sent_scores = torch.tensor(emissions_list[i])
-            sent_len, n_label = sent_scores.shape
-            sent_probs = F.softmax(sent_scores, dim=1)
-            start_probs = torch.zeros(sent_len) + 1e-6
-            sent_probs = torch.cat((start_probs.view(sent_len, 1), sent_probs), 1)
-            feats = viterbi_decoder.forward(torch.log(sent_probs).view(1, sent_len, n_label+1))
-            vit_labels = viterbi_decoder.viterbi(feats)
-            vit_labels = vit_labels.view(sent_len)
-            vit_labels = vit_labels.detach().cpu().numpy()
-            for label in vit_labels:
-                preds_list[i].append(IO_label_map[label-1])
+    # if args.algorithm == "StructShot":
+    #     abstract_transitions = get_abstract_transitions(args.data_dir, args.train_fname)
+    #     viterbi_decoder = ViterbiDecoder(len(target_IO_labels)+1, abstract_transitions, args.tau)
+    #     preds_list = []
+    #     for i in range(out_label_ids.shape[0]):
+    #         sent_scores = torch.tensor(emissions_list[i])
+    #         sent_len, n_label = sent_scores.shape
+    #         sent_probs = F.softmax(sent_scores, dim=1)
+    #         start_probs = torch.zeros(sent_len) + 1e-6
+    #         sent_probs = torch.cat((start_probs.view(sent_len, 1), sent_probs), 1)
+    #         feats = viterbi_decoder.forward(torch.log(sent_probs).view(1, sent_len, n_label+1))
+    #         vit_labels = viterbi_decoder.viterbi(feats)
+    #         vit_labels = vit_labels.view(sent_len)
+    #         vit_labels = vit_labels.detach().cpu().numpy()
+    #         for label in vit_labels:
+    #             preds_list.append(label_map[label-1])
     
-    report = classification_report(out_label_list, preds_list)
-    print(report)
+    # out_label_list = [out_label_list]
+    # preds_list = [preds_list]
+
+    # report = classification_report(out_label_list, preds_list)
+    # print(report)
     results = {
-        "precision": precision_score(out_label_list, preds_list),
-        "recall": recall_score(out_label_list, preds_list),
-        "f1": f1_score(out_label_list, preds_list),
+        "accuracy": accuracy_score(out_label_list, preds_list)
     }
-    print(results)
 
     # Log and save results to file
     output_test_results_file = os.path.join(args.output_dir, "test_results.txt")
     with open(output_test_results_file, "w") as writer:
         for key in results:
             writer.write("{} = {}\n".format(key, str(results[key])))
+    
+    lines = preds_list
+    for i in range(len(lines)):
+        lines[i] = lines[i] + '\n'
 
-    test_file = os.path.join(args.data_dir, args.test_fname + ".txt")
+    # test_file = os.path.join(args.data_dir, args.test_fname + ".txt")
     output_test_preds_file = os.path.join(args.output_dir, "test_preds.txt")
-    with open(test_file, "r") as reader, open(output_test_preds_file, "w") as writer:
-        ner_task.write_predictions_to_file(writer, reader, preds_list)
+    with open(output_test_preds_file, "w") as writer:
+        writer.writelines(lines)
 
 
 def nn_decode(reps, support_reps, support_tags):
     """
     NNShot: neariest neighbor decoder for few-shot NER
     """
-    batch_size, sent_len, ndim = reps.shape
+    batch_size, ndim = reps.shape
     scores = _euclidean_metric(reps.view(-1, ndim), support_reps, True)
     # tags = support_tags[torch.argmax(scores, 1)]
     emissions = get_nn_emissions(scores, support_tags)
     tags = torch.argmax(emissions, 1)
-    return tags.view(batch_size, sent_len), emissions.view(batch_size, sent_len, -1)
+    return tags.view(batch_size), emissions.view(batch_size, -1)
 
 
 def get_nn_emissions(scores, tags):
@@ -322,10 +333,16 @@ if __name__ == "__main__":
         type=float,
         help="StructShot parameter to re-normalizes the transition probabilities",
     )
+    parser.add_argument(
+        "--sub_task",
+        default="role",
+        type=str,
+        help="sub task: trigger or role",
+    )
     args = parser.parse_args()
     print(args)
     if args.task_type=='EE':
-        ner_task = EE() 
+        ner_task = EE(task=args.sub_task) 
     elif  args.task_type=='NER':
         ner_task = NER() 
 
@@ -333,6 +350,19 @@ if __name__ == "__main__":
     trainer = generic_train(model, args)
     # # from .ckpt
     # model = model.load_from_checkpoint(args.checkpoint)
+    
     # from .bin
-    model.model = model.model.from_pretrained(args.checkpoint)
+    # model.model = model.model.from_pretrained(args.checkpoint)
+    
+    unexpected_keys = ['classifier.weight', 'classifier.bias']
+    state_dict = torch.load(os.path.join(args.model_name_or_path, "pytorch_model.bin"), map_location="cpu")
+    # for key in state_dict.keys():
+    #     print(key)
+    for key in unexpected_keys:
+        state_dict.pop(key, None)
+    model.model = model.model.from_pretrained(
+        args.model_name_or_path,
+        state_dict = state_dict
+    )
+
     evaluate_few_shot(args, model)
